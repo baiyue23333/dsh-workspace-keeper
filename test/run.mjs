@@ -36,6 +36,8 @@ const cases = [
   [P + '/x.tmp', false, '项目不收 tmp'],
   ['.dsh/sessions/s1/a.json', true, '暂存区'],
   ['x.py', false, '根部散文件'],
+  ['README.md', true, '根部 README（插件生成）'],
+  ['other.md', false, '根部其他 md'],
   ['scripts/a.py', false, '保留名'],
   ['别的项目_2026.01.01_x/a.md', false, '未建项目文件夹'],
   ['random/a.md', false, '未登记文件夹'],
