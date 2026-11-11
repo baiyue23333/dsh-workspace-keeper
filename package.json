@@ -19,5 +19,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*"
   }
 }

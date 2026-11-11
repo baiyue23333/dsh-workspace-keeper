@@ -10,6 +10,7 @@
  *
  * 工具命名走「对象-操作-tool」（见 lib/naming.js），历史条目走「原名_版本_状态」。
  */
+import z from '@deepseek-ai/schemastery'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -28,16 +29,12 @@ export const name = 'dsh-workspace-keeper'
 /** workingDirectory：解析会话 cwd 与项目；systemPrompt：挂规则段；tools：注册四个工具。 */
 export const inject = ['workingDirectory', 'systemPrompt', 'tools']
 
-export const Config = {
-  type: 'object',
-  properties: {
-    enabled: { type: 'boolean', default: true },
-    allow: { type: 'array', items: { type: 'string' }, default: [] },
-    promptRules: { type: 'boolean', default: true },
-    /** 默认模型名：会话路由里取不到模型时，建项目文件夹用它。 */
-    defaultModel: { type: 'string', default: '未标注' },
-  },
-}
+export const Config = z.object({
+  enabled: z.boolean().default(true),
+  allow: z.array(z.string()).default([]),
+  promptRules: z.boolean().default(true),
+  defaultModel: z.string().default('未标注'),
+})
 
 async function workspaceRoot(root, created) {
   let registry
