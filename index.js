@@ -13,10 +13,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  classify, normalize, ROOT_RESERVED, BANNED_EXT, TOOLS_DIR, HISTORY_DIR, README_NAME,
+  classifyEntry, normalize, ROOT_RESERVED, BANNED_EXT, TOOLS_DIR, HISTORY_DIR, README_NAME,
   parseProject, parseProjectFolder, today,
 } from './lib/layout.js'
 import { validateToolName, toKebab, TOOL_SUFFIX } from './lib/naming.js'
+import { readRegistry, writeRegistry, KIND_HINT } from './lib/roots.js'
 import {
   readManifest, writeManifest, listShared, listHistory, listProjects, listProjectTools,
   readStat, writeStat, archiveTool, writeProjectReadme, writeRootReadme, rel,
@@ -38,6 +39,14 @@ export const Config = {
   },
 }
 
+async function workspaceRoot(root, created) {
+  let registry
+  try { registry = readRegistry(root) } catch { registry = undefined }
+  const ws = path.join(root, registry === undefined ? '工作区' : registry.workspace)
+  if (created) fs.mkdirSync(ws, { recursive: true })
+  return ws
+}
+
 async function sessionRoot(ctx, exec) {
   try {
     const dir = exec?.agent === undefined ? undefined : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
@@ -50,9 +59,15 @@ async function sessionRoot(ctx, exec) {
 function modelOf(exec, fallback) {
   try {
     const m = exec?.agent?.session?.requestHeader?.()?.config?.model
-    if (typeof m === 'string' && m !== '') return m.replace(/[_\s/]+/g, '-')
+    if (typeof m === 'string' && m !== '') return safeSegment(m)
   } catch { /* 取不到就用默认 */ }
   return fallback
+}
+
+/** 把模型名/项目名里的非法字符折成 -，保证能直接当文件夹名的一段。 */
+function safeSegment(text) {
+  const t = String(text == null ? '' : text).trim().replace(/[\s\\/:*?"<>|_]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
+  return t === '' ? '未标注' : t
 }
 
 function outText() {
@@ -65,6 +80,9 @@ function outText() {
 function rulesText() {
   return [
     '## 工作区规矩（dsh-workspace-keeper 在落盘前强制执行）',
+    '',
+    '根部是 ' + '(见 roots.json 登记表)' + '：只有登记过的顶层目录可写；未登记的层级与根部散文件一律拒绝。',
+    '新增位置 = 先在 roots.json 里加一条登记（kind: workspace/project/tool/plugin/external/archive，access: rw/ro）。',
     '',
     '工作区结构：',
     '- tools/<工具名>/ —— 公共工具，其他对话也能用；',
@@ -103,7 +121,12 @@ export function apply(ctx, config = {}) {
     const root = await sessionRoot(ctx, exec)
     const target = normalize(path.relative(root, path.isAbsolute(raw) ? raw : path.resolve(root, raw)))
     if (target === '' || target === '.') return decision
-    const v = classify(target, { allow: conf.allow, projects: listProjects(root) })
+    let registry
+    try { registry = readRegistry(root) } catch (e) {
+      return { kind: 'deny', reason: '[workspace-keeper] 登记表 roots.json 读不了：' + e.message, info: { source: 'dsh-workspace-keeper', rel: target } }
+    }
+    const wsRoot = registry === undefined ? path.join(root, '工作区') : path.join(root, registry.workspace)
+    const v = classifyEntry(target, { registry, allow: conf.allow, projects: listProjects(wsRoot) })
     if (v.ok) return decision
     return {
       kind: 'deny',
@@ -129,7 +152,8 @@ export function apply(ctx, config = {}) {
       const tool = String(args.name ?? '').trim()
       const check = validateToolName(tool)
       if (!check.ok) throw new Error('名字不合规：' + check.reason + '。正确写法如 ' + check.example)
-      const root = await sessionRoot(ctx, exec)
+      const base = await sessionRoot(ctx, exec)
+      const root = await workspaceRoot(base, true)
       if (args.scope === 'shared') {
         if (!args.summary || !args.usage) throw new Error('公共工具必须写 summary 和 usage')
         const dir = path.join(root, TOOLS_DIR, tool)
@@ -164,8 +188,8 @@ export function apply(ctx, config = {}) {
     async execute(args, exec) {
       const proj = String(args.name ?? '').trim()
       if (proj === '' || /[\\/_\\s.]/.test(proj)) throw new Error('项目名不能含下划线、空格、点或路径分隔符：' + proj)
-      const root = await sessionRoot(ctx, exec)
-      const model = String(args.model ?? '').trim() || modelOf(exec, conf.defaultModel)
+      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
+      const model = safeSegment(String(args.model ?? '').trim() || modelOf(exec, conf.defaultModel))
       const folder = proj + '_' + today() + '_' + model
       if (!parseProjectFolder(folder)) throw new Error('拼出来的项目文件夹名不合规：' + folder)
       fs.mkdirSync(path.join(root, folder), { recursive: true })
@@ -184,7 +208,8 @@ export function apply(ctx, config = {}) {
     },
     output: outText(),
     async execute(args, exec) {
-      const root = await sessionRoot(ctx, exec)
+      const raw = await sessionRoot(ctx, exec)
+      const root = await workspaceRoot(raw, false)
       const lines = ['公共工具（' + listShared(root).length + '）：']
       const shared = listShared(root)
       if (shared.length === 0) lines.push('  无')
@@ -223,12 +248,35 @@ export function apply(ctx, config = {}) {
     },
     output: outText(),
     async execute(args, exec) {
-      const root = await sessionRoot(ctx, exec)
-      const r = archiveTool(root, String(args.name), { reason: args.reason, status: args.status, session: exec.agent?.id })
+      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
+      const name = String(args.name)
+      // 先重建说明：重建时会读工具目录（Windows 上目录句柄未释放会导致随后的删除失败）
+      writeRootReadme(root)
+      for (const p of listProjects(root)) writeProjectReadme(root, p)
+      const r = await archiveTool(root, name, { reason: args.reason, status: args.status, session: exec.agent?.id })
       if (!r.ok) throw new Error(r.reason)
+      // 归档后再重建一遍说明，让项目 README 也记上这条历史
       writeRootReadme(root)
       for (const p of listProjects(root)) writeProjectReadme(root, p)
       return { text: '已归档 → tools/历史工具/' + r.id + '/（' + r.files + ' 个文件）' }
+    },
+  })
+
+  ctx.tools.register({
+    name: 'workspace_roots_list',
+    description: '列出根部登记表 roots.json 的内容：每个顶层目录的类别（workspace/project/tool/plugin/external/archive）与可写性。',
+    parameters: {},
+    output: outText(),
+    async execute(_args, exec) {
+      const base = await sessionRoot(ctx, exec)
+      const root = await workspaceRoot(base, false)
+      let registry
+      try { registry = readRegistry(base) } catch (e) { throw new Error('roots.json 解析失败：' + e.message) }
+      if (registry === undefined) return { text: '根部还没有 roots.json。' + base }
+      const rows = Object.entries(registry.entries).sort((a, b) => a[0].localeCompare(b[0]))
+      const lines = ['根部：' + root, '工作区：' + registry.workspace, '', '| 目录 | 类别 | 可写 | 说明 |', '| --- | --- | --- | --- |']
+      for (const [name, e] of rows) lines.push('| ' + name + ' | ' + e.kind + ' | ' + (e.access === 'rw' ? '可写' : '只读') + ' | ' + (e.note || '') + ' |')
+      return { text: lines.join('\n') }
     },
   })
 
@@ -240,7 +288,7 @@ export function apply(ctx, config = {}) {
     },
     output: outText(),
     async execute(args, exec) {
-      const root = await sessionRoot(ctx, exec)
+      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
       if (args.project === undefined || args.project === null || String(args.project) === '') {
         return { text: writeRootReadme(root) }
       }
@@ -262,24 +310,35 @@ export function apply(ctx, config = {}) {
         if (raw !== '' && raw !== 'check') return { kind: 'success', text: '用法：/workspace check' }
         const root = invocation?.session?.header?.cwd ?? process.cwd()
         const bad = []
-        let entries = []
-        try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { return { kind: 'error', text: '读不到工作区：' + root } }
-        for (const e of entries) {
-          if (e.isDirectory()) {
-            if (e.name !== TOOLS_DIR && e.name !== '.dsh' && !(e.name.startsWith('.') && e.name !== '.dsh') && !parseProjectFolder(e.name)) {
-              bad.push(e.name + '/（不是合规的项目文件夹）')
-            }
-          } else if (e.name !== README_NAME) {
-            bad.push(e.name + '（根部只收项目文件夹和 README.md）')
+        let registry
+        try { registry = readRegistry(root) } catch (e) { return { kind: 'error', text: 'roots.json 解析失败：' + e.message } }
+        if (registry === undefined) {
+          bad.push('缺 roots.json（根部登记表），所有顶层目录都视为未登记')
+        } else {
+          let entries = []
+          try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { return { kind: 'error', text: '读不到根部：' + root } }
+          for (const e of entries) {
+            if (e.name.startsWith('.')) continue
+            if (registry.entries[e.name] === undefined) bad.push(e.name + (e.isDirectory() ? '/' : '') + '（根部未登记，登记到 roots.json 或移进工作区）')
           }
         }
-        for (const t of listShared(root)) {
-          const m = readManifest(root, t)
-          if (m.summary === undefined) bad.push('tools/' + t + '/（缺 tool-manifest.json）')
-          if (!validateToolName(t).ok) bad.push('tools/' + t + '/（名字不是 <对象>-<操作>-' + TOOL_SUFFIX + '）')
+        const ws = registry === undefined ? path.join(root, '工作区') : path.join(root, registry.workspace)
+        let wsEntries = []
+        try { wsEntries = fs.readdirSync(ws, { withFileTypes: true }) } catch { /* 工作区还没建 */ }
+        for (const e of wsEntries) {
+          if (e.isDirectory()) {
+            if (e.name !== TOOLS_DIR && e.name !== '.dsh' && !e.name.startsWith('.') && !parseProjectFolder(e.name)) bad.push(registry.workspace + '/' + e.name + '/（不是合规的项目文件夹）')
+          } else if (e.name !== README_NAME) {
+            bad.push(registry.workspace + '/' + e.name + '（工作区根部只收项目文件夹和 README.md）')
+          }
+        }
+        for (const t of listShared(ws)) {
+          const m = readManifest(ws, t)
+          if (m.summary === undefined) bad.push(registry.workspace + '/tools/' + t + '/（缺 tool-manifest.json）')
+          if (!validateToolName(t).ok) bad.push(registry.workspace + '/tools/' + t + '/（名字不是 <对象>-<操作>-' + TOOL_SUFFIX + '）')
         }
         const msg = bad.length === 0
-          ? '工作区正常：' + listShared(root).length + ' 个公共工具，' + listProjects(root).length + ' 个项目，' + listHistory(root).length + ' 个历史工具。'
+          ? '正常：' + (registry === undefined ? 0 : Object.keys(registry.entries).length) + ' 条根部登记，' + listShared(ws).length + ' 个公共工具，' + listProjects(ws).length + ' 个项目，' + listHistory(ws).length + ' 个历史工具。'
           : '发现问题 ' + bad.length + ' 处：\n' + bad.map((b) => '  - ' + b).join('\n')
         return { kind: 'success', text: msg }
       },

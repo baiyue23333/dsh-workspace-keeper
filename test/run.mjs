@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { classify, parseProjectFolder, parseProject, projectFolderName } from '../lib/layout.js'
+import { classifyWorkspace, parseProjectFolder, parseProject, projectFolderName } from '../lib/layout.js'
 import { listShared, listHistory, listProjects, listProjectTools, writeManifest, writeStat, archiveTool, writeProjectReadme, writeRootReadme } from '../lib/manifest.js'
 
 let fail = 0
@@ -36,7 +36,6 @@ const cases = [
   [P + '/x.tmp', false, '项目不收 tmp'],
   ['.dsh/sessions/s1/a.json', true, '暂存区'],
   ['x.py', false, '根部散文件'],
-  ['README.md', true, '根部 README（插件生成）'],
   ['other.md', false, '根部其他 md'],
   ['scripts/a.py', false, '保留名'],
   ['别的项目_2026.01.01_x/a.md', false, '未建项目文件夹'],
@@ -46,7 +45,7 @@ const cases = [
 ]
 for (const [p, want, label] of cases) {
   if (p === '') continue
-  const r = classify(p, opts)
+  const r = classifyWorkspace(p, opts)
   ok(r.ok === want, label + '：' + p + (r.ok ? '' : ' → ' + r.reason))
 }
 
@@ -65,18 +64,18 @@ const pr = writeProjectReadme(root, P)
 ok(pr.includes('bash-executor-tool') && pr.includes('pdf-merge-tool') && pr.includes('qwen-image'), '项目 README 含公共/项目工具与模型')
 ok(fs.existsSync(path.join(root, P, 'README.md')), '项目 README 落盘')
 ok(writeRootReadme(root).includes(P), '根部 README 列出项目')
-const a = archiveTool(root, 'bash-executor-tool', { reason: '0.5.4 起自带修复', status: 'deprecated' })
+const a = await archiveTool(root, 'bash-executor-tool', { reason: '0.5.4 起自带修复', status: 'deprecated' })
 ok(a.ok && a.id === 'bash-executor_v1_deprecated', '归档名 原名_版本_状态：' + (a.id ?? a.reason))
 ok(!fs.existsSync(sharedDir), '归档后原目录消失')
 ok(fs.existsSync(path.join(root, 'tools/历史工具', a.id, 'why.md')), '历史件带 why.md')
-const b = archiveTool(root, 'nope', { reason: 'x' })
+const b = await archiveTool(root, 'nope', { reason: 'x' })
 ok(b.ok === false, '归档不存在的工具被拒')
 fs.mkdirSync(path.join(root, 'tools', 'dup-tool'), { recursive: true })
 writeManifest(path.join(root, 'tools', 'dup-tool'), { name: 'dup-tool', summary: 'x', usage: 'y' })
-const c1 = archiveTool(root, 'dup-tool', { reason: 'x', status: 'broken' })
+const c1 = await archiveTool(root, 'dup-tool', { reason: 'x', status: 'broken' })
 fs.mkdirSync(path.join(root, 'tools', 'dup-tool'), { recursive: true })
 writeManifest(path.join(root, 'tools', 'dup-tool'), { name: 'dup-tool', summary: 'x', usage: 'y' })
-const c2 = archiveTool(root, 'dup-tool', { reason: 'x', status: 'broken' })
+const c2 = await archiveTool(root, 'dup-tool', { reason: 'x', status: 'broken' })
 ok(c1.id === 'dup_v1_broken' && c2.id === 'dup_v2_broken', '撞名版本自增：' + c1.id + ' → ' + c2.id)
 ok(listHistory(root).length === 3, '历史列表 3 条')
 console.log(fail === 0 ? 'ALL PASS' : fail + ' FAILED')

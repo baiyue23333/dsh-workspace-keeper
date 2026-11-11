@@ -20,13 +20,15 @@ const ctx = {
   get: () => undefined,
   on: (ev, fn) => { if (ev === 'tools/pre-execute') gate = fn },
 }
+fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: '工作区', entries: { 工作区: { kind: 'workspace', access: 'rw', note: 'x' } } }))
+fs.mkdirSync(path.join(root, '工作区'), { recursive: true })
 apply(ctx, {})
-ok(tools.size === 5, '注册 5 个工具')
+ok(tools.size === 6, '注册 6 个工具')
 ok(sections[0]?.text.includes('tools/<工具名>'), '系统提示写明公共工具位置')
 ok(sections[0]?.text.includes('<对象>-<操作>-tool'), '系统提示写明命名规则')
 const p = (f) => gate({ name: 'write', arguments: { file_path: f }, agent }, async () => ({ kind: 'allow' }))
 ok((await p('tmp/a.py')).kind === 'deny', 'tmp/ 被拒')
-ok((await p('.dsh/sessions/s1/x.json')).kind === 'allow', '暂存区放行')
-ok((await p('tools/x.py')).kind === 'deny', 'tools/ 根下散文件被拒')
+ok((await p('工作区/.dsh/sessions/s1/x.json')).kind === 'allow', '暂存区放行')
+ok((await p('工作区/tools/x.py')).kind === 'deny', 'tools/ 根下散文件被拒')
 console.log(fail === 0 ? 'ALL PASS' : fail + ' FAILED')
 process.exit(fail === 0 ? 0 : 1)
