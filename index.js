@@ -69,7 +69,7 @@ function safeSegment(text) {
 
 function outText() {
   return {
-    schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string', required: true } } },
+    schema: { type: 'object', additionalProperties: false, required: ['text'], properties: { text: { type: 'string', description: '结果说明' } } },
     render: (_a, v) => [{ type: 'text', text: String(v.text) }],
   }
 }
@@ -94,6 +94,23 @@ function rulesText() {
     '会被拒绝：根部散文件、' + ROOT_RESERVED.join(' ') + ' 这类保留名、' + BANNED_EXT.join(' ') + ' 后缀、带 .. 的路径、工作区外绝对路径、不按 <项目名>_<yyyy.mm.dd>_<模型名> 命名的项目文件夹。',
     '需要新位置先问人；确实要放行请改插件配置 allow。',
   ].join('\n')
+}
+
+
+function assertSupportedSchema(schema, path = 'schema') {
+  if (schema === null || typeof schema !== 'object') throw new Error('[workspace-keeper] ' + path + ' 不是 schema 对象')
+  const type = schema.type
+  if (Object.hasOwn(schema, 'required') && type !== undefined && type !== 'object') {
+    throw new Error('[workspace-keeper] ' + path + '.required 只能放在对象上；' + type + ' 类型要用对象级 required 数组')
+  }
+  const props = schema.properties
+  if (props && typeof props === 'object') {
+    for (const [k, v] of Object.entries(props)) assertSupportedSchema(v, path + '.properties.' + k)
+  }
+  if (schema.items) assertSupportedSchema(schema.items, path + '.items')
+  for (const k of ['oneOf', 'anyOf', 'allOf']) {
+    if (Array.isArray(schema[k])) schema[k].forEach((v, i) => assertSupportedSchema(v, path + '.' + k + '[' + i + ']'))
+  }
 }
 
 export function apply(ctx, config = {}) {
@@ -133,17 +150,26 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 2. 工具分家 ─────────────────────────────────────────────────────────
+  // 自检：每个工具的 schema 只声明一次，注册时就用 DSH 的校验函数过一遍，坏了一启动就报。
+  const registered = []
+  const realRegister = ctx.tools.register.bind(ctx.tools)
+  ctx.tools.register = (definition, options) => {
+    assertSupportedSchema(definition.parameters)
+    if (definition.output && definition.output.schema !== undefined) assertSupportedSchema(definition.output.schema)
+    registered.push(definition.name)
+    return realRegister(definition, options)
+  }
+
   ctx.tools.register({
     name: 'workspace_tools_register',
     description: '登记对话里造出来的工具。scope=shared → tools/<name>/ 并写 tool-manifest.json（公共）；scope=project → 当前项目文件夹的 <项目名>-tools/<name>/（只给这个项目用）。名字必须是 <对象>-<操作>-' + TOOL_SUFFIX + '。已有文件不动，只补登记。',
-    parameters: {
-      name: { type: 'string', required: true, description: '工具名，<对象>-<操作>-' + TOOL_SUFFIX + '，例：pdf-merge-' + TOOL_SUFFIX },
-      scope: { type: 'string', required: true, enum: ['shared', 'project'], description: 'shared=公共；project=只给当前项目' },
+    parameters: { type: 'object', additionalProperties: false, required: ['name', 'scope'], properties: {
+      name: { type: 'string', description: '工具名，<对象>-<操作>-' + TOOL_SUFFIX + '，例：pdf-merge-' + TOOL_SUFFIX },
+      scope: { type: 'string', enum: ['shared', 'project'], description: 'shared=公共；project=只给当前项目' },
       summary: { type: 'string', description: '一句话用途（shared 必填）' },
       usage: { type: 'string', description: '怎么调用，例如 python run.py --in a.pdf（shared 必填）' },
       entry: { type: 'string', description: '入口文件相对工具文件夹的路径，例如 run.py' },
-      project: { type: 'string', description: 'scope=project 时指定项目文件夹名；只有一个项目时可省略' },
-    },
+      project: { type: 'string', description: 'scope=project 时指定项目文件夹名；只有一个项目时可省略' }, } },
     output: outText(),
     async execute(args, exec) {
       const tool = String(args.name ?? '').trim()
@@ -177,10 +203,9 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'workspace_project_create',
     description: '建一个项目文件夹 <项目名>_<今天>_<模型名>/，写好 README.md 和 _stat.json。已有同名（同日期同模型）就复用。',
-    parameters: {
-      name: { type: 'string', required: true, description: '项目名，不含下划线和空格，例如 和服少女' },
-      model: { type: 'string', description: '模型名；不填用会话当前模型' },
-    },
+    parameters: { type: 'object', additionalProperties: false, required: ['name'], properties: {
+      name: { type: 'string', description: '项目名，不含下划线和空格，例如 和服少女' },
+      model: { type: 'string', description: '模型名；不填用会话当前模型' }, } },
     output: outText(),
     async execute(args, exec) {
       const proj = String(args.name ?? '').trim()
@@ -200,9 +225,8 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'workspace_tools_list',
     description: '列出公共工具（含登记状态）、项目专用工具、历史工具。',
-    parameters: {
-      project: { type: 'string', description: '只看某个项目的工具；不填就列全部项目' },
-    },
+    parameters: { type: 'object', additionalProperties: false, required: [], properties: {
+      project: { type: 'string', description: '只看某个项目的工具；不填就列全部项目' }, } },
     output: outText(),
     async execute(args, exec) {
       const raw = await sessionRoot(ctx, exec)
@@ -238,11 +262,10 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'workspace_tools_archive',
     description: '公共工具不能用了时，把它整个文件夹移进 tools/历史工具/<原名>_<版本>_<状态>/ 并写 why.md，原位置清空。',
-    parameters: {
-      name: { type: 'string', required: true, description: '要归档的公共工具名' },
-      reason: { type: 'string', required: true, description: '为什么不能用了' },
-      status: { type: 'string', description: 'broken=跑不起来（默认）；deprecated=被替代' },
-    },
+    parameters: { type: 'object', additionalProperties: false, required: ['name', 'reason'], properties: {
+      name: { type: 'string', description: '要归档的公共工具名' },
+      reason: { type: 'string', description: '为什么不能用了' },
+      status: { type: 'string', description: 'broken=跑不起来（默认）；deprecated=被替代' }, } },
     output: outText(),
     async execute(args, exec) {
       const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
@@ -262,7 +285,7 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'workspace_roots_list',
     description: '列出根部登记表 roots.json 的内容：每个顶层目录的类别（workspace/project/tool/plugin/external/archive）与可写性。',
-    parameters: {},
+    parameters: { type: 'object', additionalProperties: false, properties: {} },
     output: outText(),
     async execute(_args, exec) {
       const base = await sessionRoot(ctx, exec)
@@ -280,9 +303,8 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'workspace_readme_build',
     description: '按当前目录重建说明：不填 project 就重建工作区根部 README.md，填了重建该项目的 README.md。',
-    parameters: {
-      project: { type: 'string', description: '项目文件夹名，例如 和服少女_2026.11.12_deepseek-flash' },
-    },
+    parameters: { type: 'object', additionalProperties: false, required: [], properties: {
+      project: { type: 'string', description: '项目文件夹名，例如 和服少女_2026.11.12_deepseek-flash' }, } },
     output: outText(),
     async execute(args, exec) {
       const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
