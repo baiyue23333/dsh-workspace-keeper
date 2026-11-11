@@ -1,0 +1,23 @@
+{
+  "name": "dsh-workspace-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "规制 Agent 的文件乱放：写入闸门 + 工作区结构 README + 公共/会话工具分家与历史归档。",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

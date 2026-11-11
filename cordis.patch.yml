@@ -1,0 +1,8 @@
+- insert:
+    - id: dsh-workspace-keeper
+      name: dsh-workspace-keeper
+      config:
+        enabled: true
+        promptRules: true
+        allow: []
+        defaultModel: 未标注
