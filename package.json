@@ -1,7 +1,6 @@
 {
   "name": "dsh-workspace-keeper",
   "version": "0.1.0",
-  "private": true,
   "description": "让 AI 别再乱放文件：落盘前按登记表校验位置，工具分公共/项目并支持历史归档。",
   "license": "MIT",
   "type": "module",
@@ -35,10 +34,16 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/dsh-workspace-keeper.git"
+    "url": "https://github.com/baiyue23333/dsh-workspace-keeper.git"
   },
-  "homepage": "https://github.com/OWNER/dsh-workspace-keeper#readme",
+  "homepage": "https://github.com/baiyue23333/dsh-workspace-keeper#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-workspace-keeper/issues"
+    "url": "https://github.com/baiyue23333/dsh-workspace-keeper/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
