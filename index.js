@@ -64,7 +64,7 @@ function isInside(parent, child) {
 async function workspaceRoot(root, created) {
   let registry
   try { registry = readRegistry(root) } catch { registry = undefined }
-  const ws = path.join(root, registry === undefined ? '工作区' : registry.workspace)
+  const ws = path.join(root, registry === undefined ? 'workflow' : registry.workspace)
   if (created) fs.mkdirSync(ws, { recursive: true })
   return ws
 }
@@ -180,7 +180,7 @@ export function apply(ctx, config = {}) {
       // 登记表坏了不要变成「全拦截」，只提示并放行，避免自锁
       return decision
     }
-    const wsRoot = registry === undefined ? path.join(root, '工作区') : path.join(root, registry.workspace)
+    const wsRoot = registry === undefined ? path.join(root, 'workflow') : path.join(root, registry.workspace)
     const v = classifyEntry(target, { registry, allow: conf.allow, projects: listProjects(wsRoot) })
     if (v.ok) return decision
     return {
@@ -389,7 +389,7 @@ export function apply(ctx, config = {}) {
             if (registry.entries[e.name] === undefined) bad.push(e.name + (e.isDirectory() ? '/' : '') + '（根部未登记，登记到 roots.json 或移进工作区）')
           }
         }
-        const ws = registry === undefined ? path.join(root, '工作区') : path.join(root, registry.workspace)
+        const ws = registry === undefined ? path.join(root, 'workflow') : path.join(root, registry.workspace)
         let wsEntries = []
         try { wsEntries = fs.readdirSync(ws, { withFileTypes: true }) } catch { /* 工作区还没建 */ }
         for (const e of wsEntries) {

@@ -22,9 +22,9 @@ const ctx = {
   get: (svc) => svc === 'commands' ? { register: (c) => commandsSeen.push(c) } : undefined,
   on: (ev, fn) => { if (ev === 'tools/pre-execute') gate = fn },
 }
-const ws = path.join(root, '工作区')
+const ws = path.join(root, 'workflow')
 fs.mkdirSync(ws, { recursive: true })
-fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: '工作区', entries: { 工作区: { kind: 'workspace', access: 'rw', note: '项目与工具' } } }, null, 2))
+fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: { workflow: { kind: 'workspace', access: 'rw', note: '项目与工具' } } }, null, 2))
 apply(ctx, {})
 const call = (n, args) => tools.get(n).execute(args, { agent })
 const expectThrow = async (p, label, needle) => {
@@ -36,7 +36,7 @@ ok(tools.size === 6 && tools.has('workspace_roots_list'), '六个工具就位')
 // 闸门
 const d1 = await gate({ name: 'write', arguments: { file_path: 'notes.py' }, agent }, async () => ({ kind: 'allow' }))
 ok(d1.kind === 'deny', '闸门拦住根部 notes.py')
-const d2 = await gate({ name: 'write', arguments: { file_path: '工作区/tools/bash-executor-tool/fix.ps1' }, agent }, async () => ({ kind: 'allow' }))
+const d2 = await gate({ name: 'write', arguments: { file_path: 'workflow/tools/bash-executor-tool/fix.ps1' }, agent }, async () => ({ kind: 'allow' }))
 ok(d2.kind === 'allow', '闸门放行公共工具路径')
 
 // 项目
@@ -45,7 +45,7 @@ const now = new Date()
 const P = '和服少女_' + now.getFullYear() + '.' + String(now.getMonth() + 1).padStart(2, '0') + '.' + String(now.getDate()).padStart(2, '0') + '_qwen-image'
 ok(pr.text.includes(P), '项目文件夹按 项目名_日期_模型 生成：' + P)
 ok(fs.existsSync(path.join(ws, P, '_stat.json')) && fs.existsSync(path.join(ws, P, 'README.md')), '项目有 _stat.json 与 README')
-const d3 = await gate({ name: 'write', arguments: { file_path: '工作区/' + P + '/角色设定/表情.md' }, agent }, async () => ({ kind: 'allow' }))
+const d3 = await gate({ name: 'write', arguments: { file_path: 'workflow/' + P + '/角色设定/表情.md' }, agent }, async () => ({ kind: 'allow' }))
 ok(d3.kind === 'allow', '项目自定文件夹放行')
 
 // 命名闸门：真实旧名必须被拒

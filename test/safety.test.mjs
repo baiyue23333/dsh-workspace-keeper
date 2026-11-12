@@ -11,11 +11,11 @@ let fail = 0
 const ok = (c, m) => { console.log((c ? 'PASS  ' : 'FAIL  ') + m); if (!c) fail += 1 }
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wk-safe-'))
-const ws = path.join(root, '工作区')
+const ws = path.join(root, 'workflow')
 fs.mkdirSync(ws, { recursive: true })
 fs.mkdirSync(path.join(root, 'plugins'), { recursive: true })
-fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 2, workspace: '工作区', entries: {
-  工作区: { kind: 'workspace', access: 'rw', note: '' },
+fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 2, workspace: 'workflow', entries: {
+  workflow: { kind: 'workspace', access: 'rw', note: '' },
   plugins: { kind: 'plugin', access: 'rw', note: '' },
 } }))
 

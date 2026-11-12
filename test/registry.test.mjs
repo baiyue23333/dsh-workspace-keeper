@@ -5,12 +5,12 @@ import { apply } from '../index.js'
 let fail = 0
 const ok = (c, m) => { console.log((c ? 'PASS  ' : 'FAIL  ') + m); if (!c) fail += 1 }
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wk-r-'))
-const ws = path.join(root, '工作区')
+const ws = path.join(root, 'workflow')
 fs.mkdirSync(ws, { recursive: true })
 fs.mkdirSync(path.join(root, 'plugins', 'dsh-x'), { recursive: true })
 fs.mkdirSync(path.join(root, 'comfy'), { recursive: true })
-fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: '工作区', entries: {
-  工作区: { kind: 'workspace', access: 'rw', note: '项目与工具' },
+fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: {
+  workflow: { kind: 'workspace', access: 'rw', note: '项目与工具' },
   plugins: { kind: 'plugin', access: 'rw', note: 'DSH 插件' },
   comfy: { kind: 'external', access: 'ro', note: 'ComfyUI' },
 } }, null, 2))
@@ -31,7 +31,7 @@ ok((await p('x.py')).kind === 'deny', '根部散文件被拒')
 ok((await p('plugins/dsh-x/index.js')).kind === 'allow', '插件可写')
 ok((await p('comfy/ComfyUI/main.py')).kind === 'deny', 'comfy 只读')
 ok((await p('workarea/a')).kind === 'deny', '未登记顶层被拒')
-ok((await p('工作区/tools/a-tool/run.py')).kind === 'allow', '工作区工具放行')
+ok((await p('workflow/tools/a-tool/run.py')).kind === 'allow', '工作区工具放行')
 const r = await tools.get('workspace_project_create').execute({ name: '测试项目' }, { agent })
 ok(r.text.includes('测试项目_'), '建项目')
 ok(/测试项目_[0-9.]+_deepseek-vl-2/.test(r.text), '模型名清洗成 deepseek-vl-2：' + r.text.split('\n')[0])
