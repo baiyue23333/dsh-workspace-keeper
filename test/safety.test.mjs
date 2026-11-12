@@ -17,7 +17,7 @@ fs.mkdirSync(path.join(root, 'plugins'), { recursive: true })
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 2, workspace: 'workflow', entries: {
   workflow: { kind: 'workspace', access: 'rw', note: '' },
   plugins: { kind: 'plugin', access: 'rw', note: '' },
-} }))
+  }, workspaceEntries: { tools: { kind: 'tools', access: 'rw', note: '' }, '.dsh': { kind: 'sessions', access: 'rw', note: '' } } }))
 
 const tools = new Map()
 let gate

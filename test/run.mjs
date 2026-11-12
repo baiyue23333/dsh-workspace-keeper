@@ -22,7 +22,7 @@ ok(!parseProjectFolder('项目_2026-11-12_x'), '横线日期不合规（清单�
 ok(!parseProjectFolder('项目_2026.13.12_x'), '非法月份不合规')
 ok(parseProject(projectFolderName('和服少女', '2026.11.12', 'qwen-image')).model === 'qwen-image', '项目名拆分正确')
 
-const opts = { projects: [P] }
+const opts = { projects: [P], workspaceEntries: { tools: { kind: 'tools', access: 'rw' }, '.dsh': { kind: 'sessions', access: 'rw' } } }
 const cases = [
   ['tools/bash-executor-tool/run.py', true, '公共工具'],
   ['tools/历史工具/bash-executor_v1_broken/why.md', false, '历史只读'],
@@ -38,7 +38,7 @@ const cases = [
   ['x.py', false, '根部散文件'],
   ['other.md', false, '根部其他 md'],
   ['scripts/a.py', false, '保留名'],
-  ['别的项目_2026.01.01_x/a.md', false, '未建项目文件夹'],
+  ['别的项目_2026.01.01_x/a.md', true, '新项目按命名规则可直接建'],
   ['random/a.md', false, '未登记文件夹'],
   ['../escape.txt', false, '带 ..'],
   ['C:/Windows/x.txt', false, '绝对路径'],

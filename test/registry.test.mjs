@@ -13,7 +13,7 @@ fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, wor
   workflow: { kind: 'workspace', access: 'rw', note: '项目与工具' },
   plugins: { kind: 'plugin', access: 'rw', note: 'DSH 插件' },
   comfy: { kind: 'external', access: 'ro', note: 'ComfyUI' },
-} }, null, 2))
+  }, workspaceEntries: { tools: { kind: 'tools', access: 'rw', note: '' }, '.dsh': { kind: 'sessions', access: 'rw', note: '' } } }, null, 2))
 const tools = new Map()
 let gate
 const agent = { id: 'a1', session: { requestHeader: () => ({ config: { model: 'deepseek/vl 2' } }) } }

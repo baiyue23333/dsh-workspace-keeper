@@ -14,8 +14,8 @@ import z from '@deepseek-ai/schemastery'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  classifyEntry, normalize, ROOT_RESERVED, BANNED_EXT, TOOLS_DIR, HISTORY_DIR, README_NAME,
-  parseProject, parseProjectFolder, today,
+  classifyEntry, normalize, FORBIDDEN_DIRS, BANNED_EXT, TOOLS_DIR, HISTORY_DIR, README_NAME,
+  parseProject, parseProjectFolder, today, segmentProblem, safeSegment,
 } from './lib/layout.js'
 import { validateToolName, toKebab, TOOL_SUFFIX } from './lib/naming.js'
 import { readRegistry, writeRegistry, KIND_HINT } from './lib/roots.js'
@@ -86,10 +86,11 @@ function modelOf(exec, fallback) {
   return fallback
 }
 
-/** 把模型名/项目名里的非法字符折成 -，保证能直接当文件夹名的一段。 */
-function safeSegment(text) {
-  const t = String(text == null ? '' : text).trim().replace(/[\s\\/:*?"<>|_]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
-  return t === '' ? '未标注' : t
+/** 当前会话的稳定 id（用于 .dsh/sessions/<id>/ 隔离）。 */
+function sessionKeyOf(exec) {
+  const id = exec?.agent?.session?.id ?? exec?.agent?.id
+  if (typeof id !== 'string' || id === '') return undefined
+  return id.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 64)
 }
 
 function outText() {
@@ -103,28 +104,25 @@ function rulesText() {
   return [
     '## 工作区规矩（dsh-workspace-keeper 在落盘前强制执行）',
     '',
-    '根部是 ' + '(见 roots.json 登记表)' + '：只有登记过的顶层目录可写；未登记的层级与根部散文件一律拒绝。',
-    '新增位置 = 先在 roots.json 里加一条登记（kind: workspace/project/tool/plugin/external/archive，access: rw/ro）。',
+    '根目录 A:\\workflow\\dsh 只有四类：workflow/、plugins/、归档区、根部文档。',
+    '每个能写的位置都在 roots.json 里登记过；没登记的顶层条目一律拒写。',
     '',
-    '工作区结构：',
-    '- tools/<工具名>/ —— 公共工具，其他对话也能用；',
-    '- tools/历史工具/<原名>_<版本>_<状态>/ —— 停用的公共工具，只读；',
-    '- <项目名>_<yyyy.mm.dd>_<模型名>/ —— 项目文件夹：<项目名>-tools/ 放这个项目的工具，其他文件夹名字自己按内容取；',
-    '- .dsh/sessions/<会话>/ —— 一次性产物，用完自己清理。',
+    'workflow/ 里面：',
+    '- 外部支持/<组件>/ —— 共享外部组件（ComfyUI、Git），项目要用就来取；',
+    '- sunloom/ —— 常驻工程，保留原名；',
+    '- tools/<对象>-<操作>-tool/ —— 公共工具；tools/历史工具/<原名>_<版本>_<状态>/ 只读；',
+    '- <项目名>_<yyyy.mm.dd>_<模型名>/ —— 一次性项目，里面放 <项目名>-tools/ 与按内容命名的目录；',
+    '- .dsh/sessions/<你自己的会话 id>/ —— 一次性产物，别写进别人的会话目录。',
     '',
-    '工具命名：<对象>-<操作>-'+TOOL_SUFFIX+'（例：bash-executor-'+TOOL_SUFFIX+'、pdf-merge-'+TOOL_SUFFIX+'），小写 kebab，三段；',
-    '工具登记用 workspace_tools_register：scope=shared 进 tools/，scope=project 进当前项目文件夹的 <项目名>-tools/；',
-    '公共工具坏了、不能用了：workspace_tools_archive，status 选 broken（跑不起来）或 deprecated（被替代）。',
+    '工具命名：<对象>-<操作>-tool，小写 kebab，三段，例如 bash-executor-tool。',
+    '登记公共工具用 workspace_tools_register（scope=shared / project）；',
+    '公共工具不能用了用 workspace_tools_archive（原目录未提交 git 会被拒）。',
     '',
-    '会被拒绝：根部散文件、' + ROOT_RESERVED.join(' ') + ' 这类保留名、' + BANNED_EXT.join(' ') + ' 后缀、带 .. 的路径、工作区外绝对路径、不按 <项目名>_<yyyy.mm.dd>_<模型名> 命名的项目文件夹。',
-    '需要新位置先问人；确实要放行请改插件配置 allow。',
-    '',
-    '遇到故障先翻工具库，别从零写：',
-    '- 公共工具在 workflow/tools/<对象>-<操作>-tool/，每个目录里的 README.md 写了「什么时候用、怎么用」；',
-    '- 先用 workspace_tools_list 看有哪些现成工具，再决定要不要新造；',
-    '- 用工具修完仍然复发，说明根因没找到，把结论写回该工具的 README。',
+    '项目里禁止：' + FORBIDDEN_DIRS.join('、') + ' 这类万能抽屉；' + BANNED_EXT.join(' ') + ' 后缀；带 .. 的路径。',
+    '遇到故障先翻 tools/ 里现成的工具，别从零写；修完还复发说明根因没找到，把结论写回那个工具的 README。',
   ].join('\n')
 }
+
 
 
 function assertSupportedSchema(schema, path = 'schema') {
@@ -156,37 +154,49 @@ export function apply(ctx, config = {}) {
   }
 
   // ── 1. 写入闸门 ─────────────────────────────────────────────────────────
-  // ── 1. 写入闸门 ─────────────────────────────────────────────────────────
-  // 三条硬性约束（上次把 DSH 配置也拦了，导致改不回来）：
-  //   a) 用户配置目录 ~/.dsh/** 永远放行，代码里写死，不读配置；
-  //   b) 只拦「工作区根内部」的路径，工作区外一律不管；
-  //   c) /workspace off 可以用一句命令把自己停掉。
+  // 约束：
+  //   a) 用户配置目录 ~/.dsh/** 永远放行（代码写死，不读配置）——防止把 DSH 锁死；
+  //   b) 只拦「会话 cwd」之内的路径，工作区外一律不管；
+  //   c) /workspace off 可以一句命令停用；
+  //   d) 登记表读不出来时**拒绝**并报错，不静默放行。
+  const WRITE_TOOLS = new Set(['write', 'edit', 'apply_patch'])
   let gateEnabled = conf.enabled !== false
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
     if (!gateEnabled) return decision
     if (decision?.kind !== 'allow') return decision
-    if (exec.name !== 'write' && exec.name !== 'edit') return decision
-    const raw = exec.arguments?.file_path
-    if (typeof raw !== 'string' || raw.trim() === '') return decision
+    if (!WRITE_TOOLS.has(exec.name)) return decision
+    const raw = exec.arguments?.file_path ?? exec.arguments?.path
+    // apply_patch 用补丁文本，拿不到单一路径 -> 直接要求改用 write/edit
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      if (exec.name === 'apply_patch') {
+        return { kind: 'deny', reason: '[workspace-keeper] apply_patch 不做路径校验，请改用 write / edit。', info: { source: 'dsh-workspace-keeper' } }
+      }
+      return decision
+    }
 
-    // (a) 用户配置目录永远放行 —— 否则插件能把自己和整个 DSH 配置锁死
     if (isInDshHome(raw)) return decision
 
     const root = await sessionRoot(ctx, exec)
     const abs = path.isAbsolute(raw) ? raw : path.resolve(root, raw)
-    // (b) 工作区之外不归我们管
     if (!isInside(root, abs)) return decision
     const target = normalize(path.relative(root, abs))
     if (target === '' || target === '.') return decision
 
     let registry
     try { registry = readRegistry(root) } catch (e) {
-      // 登记表坏了不要变成「全拦截」，只提示并放行，避免自锁
-      return decision
+      return { kind: 'deny', reason: '[workspace-keeper] roots.json 损坏，拒绝落盘：' + e.message, info: { source: 'dsh-workspace-keeper', rel: target } }
     }
-    const wsRoot = registry === undefined ? path.join(root, 'workflow') : path.join(root, registry.workspace)
-    const v = classifyEntry(target, { registry, allow: conf.allow, projects: listProjects(wsRoot) })
+    if (registry === undefined) {
+      return { kind: 'deny', reason: '[workspace-keeper] 找不到 roots.json，无法判断位置是否合规', info: { source: 'dsh-workspace-keeper', rel: target } }
+    }
+    const wsRoot = path.join(root, registry.workspace)
+    const v = classifyEntry(target, {
+      registry,
+      allow: conf.allow,
+      projects: listProjects(wsRoot),
+      sessionId: sessionKeyOf(exec),
+    })
     if (v.ok) return decision
     return {
       kind: 'deny',
@@ -253,7 +263,8 @@ export function apply(ctx, config = {}) {
     output: outText(),
     async execute(args, exec) {
       const proj = String(args.name ?? '').trim()
-      if (proj === '' || /[\\/_\\s.]/.test(proj)) throw new Error('项目名不能含下划线、空格、点或路径分隔符：' + proj)
+      const bad = segmentProblem(proj) ?? (/[_\s.]/.test(proj) ? '不能含下划线、空格或点' : undefined)
+      if (bad !== undefined) throw new Error('项目名不合规（' + bad + '）：' + proj)
       const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
       const model = safeSegment(String(args.model ?? '').trim() || modelOf(exec, conf.defaultModel))
       const folder = proj + '_' + today() + '_' + model

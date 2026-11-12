@@ -20,17 +20,17 @@ const ctx = {
   get: () => undefined,
   on: (ev, fn) => { if (ev === 'tools/pre-execute') gate = fn },
 }
-fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: { workflow: { kind: 'workspace', access: 'rw', note: 'x' } } }))
+fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: { workflow: { kind: 'workspace', access: 'rw', note: 'x' } }, workspaceEntries: { tools: { kind: 'tools', access: 'rw', note: '' }, '.dsh': { kind: 'sessions', access: 'rw', note: '' }, sunloom: { kind: 'asset', access: 'rw', note: '' }, '外部支持': { kind: 'asset', access: 'rw', note: '' } } }))
 fs.mkdirSync(path.join(root, 'workflow'), { recursive: true })
 const originalRegister = ctx.tools.register
 apply(ctx, {})
 ok(ctx.tools.register === originalRegister, '不改写共享工具注册器（保持 Agent preset 作用域）')
 ok(tools.size === 6, '注册 6 个工具')
-ok(sections[0]?.text.includes('tools/<工具名>'), '系统提示写明公共工具位置')
+ok(sections[0]?.text.includes('tools/<对象>-<操作>-tool'), '系统提示写明公共工具位置')
 ok(sections[0]?.text.includes('<对象>-<操作>-tool'), '系统提示写明命名规则')
 const p = (f) => gate({ name: 'write', arguments: { file_path: f }, agent }, async () => ({ kind: 'allow' }))
 ok((await p('tmp/a.py')).kind === 'deny', 'tmp/ 被拒')
-ok((await p('workflow/.dsh/sessions/s1/x.json')).kind === 'allow', '暂存区放行')
+ok((await p('workflow/.dsh/sessions/a1/x.json')).kind === 'allow', '暂存区放行')
 ok((await p('workflow/tools/x.py')).kind === 'deny', 'tools/ 根下散文件被拒')
 console.log(fail === 0 ? 'ALL PASS' : fail + ' FAILED')
 process.exit(fail === 0 ? 0 : 1)
