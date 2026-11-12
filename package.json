@@ -2,7 +2,7 @@
   "name": "dsh-workspace-keeper",
   "version": "0.1.0",
   "private": true,
-  "description": "规制 Agent 的文件乱放：写入闸门 + 工作区结构 README + 公共/会话工具分家与历史归档。",
+  "description": "让 AI 别再乱放文件：落盘前按登记表校验位置，工具分公共/项目并支持历史归档。",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -13,7 +13,8 @@
     "index.js",
     "lib/*.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -22,5 +23,22 @@
   },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "*"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "workspace",
+    "layout",
+    "guardrail"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OWNER/dsh-workspace-keeper.git"
+  },
+  "homepage": "https://github.com/OWNER/dsh-workspace-keeper#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/dsh-workspace-keeper/issues"
   }
 }
