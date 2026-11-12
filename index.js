@@ -36,6 +36,31 @@ export const Config = z.object({
   defaultModel: z.string().default('未标注'),
 })
 
+/** 用户配置目录（$DSH_HOME 或 ~/.dsh）：永远放行，防止插件把自己锁死。 */
+function dshHome() {
+  const env = process.env.DSH_HOME
+  if (typeof env === 'string' && env.trim() !== '') return path.resolve(env)
+  const home = process.env.USERPROFILE || process.env.HOME || ''
+  return path.resolve(home, '.dsh')
+}
+
+function isInDshHome(raw) {
+  try {
+    const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(process.cwd(), raw)
+    const home = dshHome()
+    const rel = path.relative(home, abs)
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  } catch { return false }
+}
+
+/** child 是否在 parent 目录内（含相等）。 */
+function isInside(parent, child) {
+  try {
+    const rel = path.relative(path.resolve(parent), path.resolve(child))
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  } catch { return false }
+}
+
 async function workspaceRoot(root, created) {
   let registry
   try { registry = readRegistry(root) } catch { registry = undefined }
@@ -126,18 +151,34 @@ export function apply(ctx, config = {}) {
   }
 
   // ── 1. 写入闸门 ─────────────────────────────────────────────────────────
+  // ── 1. 写入闸门 ─────────────────────────────────────────────────────────
+  // 三条硬性约束（上次把 DSH 配置也拦了，导致改不回来）：
+  //   a) 用户配置目录 ~/.dsh/** 永远放行，代码里写死，不读配置；
+  //   b) 只拦「工作区根内部」的路径，工作区外一律不管；
+  //   c) /workspace off 可以用一句命令把自己停掉。
+  let gateEnabled = conf.enabled !== false
   ctx.on('tools/pre-execute', async (exec, next) => {
     const decision = await next()
+    if (!gateEnabled) return decision
     if (decision?.kind !== 'allow') return decision
     if (exec.name !== 'write' && exec.name !== 'edit') return decision
     const raw = exec.arguments?.file_path
     if (typeof raw !== 'string' || raw.trim() === '') return decision
+
+    // (a) 用户配置目录永远放行 —— 否则插件能把自己和整个 DSH 配置锁死
+    if (isInDshHome(raw)) return decision
+
     const root = await sessionRoot(ctx, exec)
-    const target = normalize(path.relative(root, path.isAbsolute(raw) ? raw : path.resolve(root, raw)))
+    const abs = path.isAbsolute(raw) ? raw : path.resolve(root, raw)
+    // (b) 工作区之外不归我们管
+    if (!isInside(root, abs)) return decision
+    const target = normalize(path.relative(root, abs))
     if (target === '' || target === '.') return decision
+
     let registry
     try { registry = readRegistry(root) } catch (e) {
-      return { kind: 'deny', reason: '[workspace-keeper] 登记表 roots.json 读不了：' + e.message, info: { source: 'dsh-workspace-keeper', rel: target } }
+      // 登记表坏了不要变成「全拦截」，只提示并放行，避免自锁
+      return decision
     }
     const wsRoot = registry === undefined ? path.join(root, '工作区') : path.join(root, registry.workspace)
     const v = classifyEntry(target, { registry, allow: conf.allow, projects: listProjects(wsRoot) })
@@ -150,17 +191,15 @@ export function apply(ctx, config = {}) {
   })
 
   // ── 2. 工具分家 ─────────────────────────────────────────────────────────
-  // 自检：每个工具的 schema 只声明一次，注册时就用 DSH 的校验函数过一遍，坏了一启动就报。
-  const registered = []
-  const realRegister = ctx.tools.register.bind(ctx.tools)
-  ctx.tools.register = (definition, options) => {
+  // 只校验本插件注册的工具；不要改写共享的 ctx.tools.register，否则会破坏
+  // Agent preset 的作用域，把后续工具错误地转发到全局注册器。
+  const registerTool = (definition, options) => {
     assertSupportedSchema(definition.parameters)
     if (definition.output && definition.output.schema !== undefined) assertSupportedSchema(definition.output.schema)
-    registered.push(definition.name)
-    return realRegister(definition, options)
+    return ctx.tools.register(definition, options)
   }
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_tools_register',
     description: '登记对话里造出来的工具。scope=shared → tools/<name>/ 并写 tool-manifest.json（公共）；scope=project → 当前项目文件夹的 <项目名>-tools/<name>/（只给这个项目用）。名字必须是 <对象>-<操作>-' + TOOL_SUFFIX + '。已有文件不动，只补登记。',
     parameters: { type: 'object', additionalProperties: false, required: ['name', 'scope'], properties: {
@@ -200,7 +239,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_project_create',
     description: '建一个项目文件夹 <项目名>_<今天>_<模型名>/，写好 README.md 和 _stat.json。已有同名（同日期同模型）就复用。',
     parameters: { type: 'object', additionalProperties: false, required: ['name'], properties: {
@@ -222,7 +261,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_tools_list',
     description: '列出公共工具（含登记状态）、项目专用工具、历史工具。',
     parameters: { type: 'object', additionalProperties: false, required: [], properties: {
@@ -259,7 +298,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_tools_archive',
     description: '公共工具不能用了时，把它整个文件夹移进 tools/历史工具/<原名>_<版本>_<状态>/ 并写 why.md，原位置清空。',
     parameters: { type: 'object', additionalProperties: false, required: ['name', 'reason'], properties: {
@@ -282,7 +321,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_roots_list',
     description: '列出根部登记表 roots.json 的内容：每个顶层目录的类别（workspace/project/tool/plugin/external/archive）与可写性。',
     parameters: { type: 'object', additionalProperties: false, properties: {} },
@@ -300,7 +339,7 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  ctx.tools.register({
+  registerTool({
     name: 'workspace_readme_build',
     description: '按当前目录重建说明：不填 project 就重建工作区根部 README.md，填了重建该项目的 README.md。',
     parameters: { type: 'object', additionalProperties: false, required: [], properties: {
@@ -322,11 +361,20 @@ export function apply(ctx, config = {}) {
   if (commands !== undefined) {
     commands.register({
       name: 'workspace',
-      description: '检查工作区布局与工具登记：check',
-      input: { hint: 'check' },
+      description: '工作区：check 检查布局 / off 关闭闸门 / on 恢复闸门',
+      input: { hint: 'check | off | on' },
       handler: async (invocation) => {
         const raw = String(invocation?.rawInput ?? '').trim()
-        if (raw !== '' && raw !== 'check') return { kind: 'success', text: '用法：/workspace check' }
+        // 紧急开关：拦错东西时一句命令停掉自己，不依赖改文件
+        if (raw === 'off') {
+          gateEnabled = false
+          return { kind: 'success', text: '工作区闸门已关闭（本次运行有效）。要恢复：/workspace on' }
+        }
+        if (raw === 'on') {
+          gateEnabled = true
+          return { kind: 'success', text: '工作区闸门已开启。' }
+        }
+        if (raw !== '' && raw !== 'check') return { kind: 'success', text: '用法：/workspace check | off | on' }
         const root = invocation?.session?.header?.cwd ?? process.cwd()
         const bad = []
         let registry

@@ -22,7 +22,9 @@ const ctx = {
 }
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: '工作区', entries: { 工作区: { kind: 'workspace', access: 'rw', note: 'x' } } }))
 fs.mkdirSync(path.join(root, '工作区'), { recursive: true })
+const originalRegister = ctx.tools.register
 apply(ctx, {})
+ok(ctx.tools.register === originalRegister, '不改写共享工具注册器（保持 Agent preset 作用域）')
 ok(tools.size === 6, '注册 6 个工具')
 ok(sections[0]?.text.includes('tools/<工具名>'), '系统提示写明公共工具位置')
 ok(sections[0]?.text.includes('<对象>-<操作>-tool'), '系统提示写明命名规则')
