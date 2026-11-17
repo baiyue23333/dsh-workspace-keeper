@@ -30,7 +30,7 @@ const ctx = {
   get: (s) => s === 'commands' ? { register: (c) => { cmdHandler = c.handler } } : undefined,
   on: (ev, fn) => { if (ev === 'tools/pre-execute') gate = fn },
 }
-apply(ctx, {})
+await apply(ctx, { workspaceRoot: root })
 const run = async (f) => gate({ name: 'write', arguments: { file_path: f }, agent }, async () => ({ kind: 'allow' }))
 
 // 1) DSH 配置目录永远放行
@@ -38,8 +38,12 @@ const dshHome = process.env.DSH_HOME || path.join(process.env.USERPROFILE || os.
 ok((await run(path.join(dshHome, 'profiles', 'work', 'package.json'))).kind === 'allow', '~/.dsh 配置文件放行（防自锁）')
 ok((await run(path.join(dshHome, 'logs', 'x.log'))).kind === 'allow', '~/.dsh 下任意文件放行')
 
-// 2) 工作区外不管
-ok((await run(path.join(os.tmpdir(), 'free.txt'))).kind === 'allow', '工作区之外不管')
+// 2) 工作区外一律拒绝（这是本次改动的重点）
+const outside = await run(path.join(os.tmpdir(), 'free.txt'))
+ok(outside.kind === 'deny', '工作区之外的绝对路径被拒')
+ok(String(outside.reason).includes('只能在工作区里写文件'), '拒绝理由说明「只能在工作区里写」')
+const escape = await run(path.join(root, '..', 'escape.txt'))
+ok(escape.kind === 'deny', '用 .. 逃出工作区被拒')
 
 // 3) 工作区内部照拦
 ok((await run(path.join(ws, 'stray.py'))).kind === 'deny', '工作区根部散文件仍被拦')

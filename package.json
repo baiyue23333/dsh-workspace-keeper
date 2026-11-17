@@ -1,6 +1,6 @@
 {
   "name": "dsh-workspace-keeper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "让 AI 别再乱放文件：落盘前按登记表校验位置，工具分公共/项目并支持历史归档。",
   "license": "MIT",
   "type": "module",

@@ -11,6 +11,7 @@
  * 工具命名走「对象-操作-tool」（见 lib/naming.js），历史条目走「原名_版本_状态」。
  */
 import z from '@deepseek-ai/schemastery'
+import os from 'node:os'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -34,13 +35,15 @@ export const Config = z.object({
   allow: z.array(z.string()).default([]),
   promptRules: z.boolean().default(true),
   defaultModel: z.string().default('未标注'),
+  /** 固定工作区根（含 roots.json 的目录）。不填则从会话 cwd 向上找，再查记忆文件。 */
+  workspaceRoot: z.string().default(''),
 })
 
 /** 用户配置目录（$DSH_HOME 或 ~/.dsh）：永远放行，防止插件把自己锁死。 */
 function dshHome() {
   const env = process.env.DSH_HOME
   if (typeof env === 'string' && env.trim() !== '') return path.resolve(env)
-  const home = process.env.USERPROFILE || process.env.HOME || ''
+  const home = process.env.USERPROFILE || process.env.HOME || os.homedir()
   return path.resolve(home, '.dsh')
 }
 
@@ -59,6 +62,55 @@ function isInside(parent, child) {
     const rel = path.relative(path.resolve(parent), path.resolve(child))
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
   } catch { return false }
+}
+
+/** 记忆文件：记录本机的工作区根，保证在外部目录开会话也能定位。 */
+function rootPointerFile() {
+  return path.join(dshHome(), 'workspace-keeper.root')
+}
+
+function readRootPointer() {
+  try {
+    const t = fs.readFileSync(rootPointerFile(), 'utf8').trim()
+    return t === '' ? undefined : t
+  } catch { return undefined }
+}
+
+function writeRootPointer(root) {
+  try { fs.writeFileSync(rootPointerFile(), root) } catch { /* 只读环境就算了 */ }
+}
+
+/** 从某个目录往上找含 roots.json 的目录。 */
+function findRootUpward(start, maxDepth = 8) {
+  let dir = path.resolve(start)
+  for (let i = 0; i <= maxDepth; i += 1) {
+    if (fs.existsSync(path.join(dir, 'roots.json'))) return dir
+    const up = path.dirname(dir)
+    if (up === dir) break
+    dir = up
+  }
+  return undefined
+}
+
+/**
+ * 解析工作区根（含 roots.json 的目录）。优先级：
+ *   1. 插件配置 workspaceRoot
+ *   2. 从会话 cwd 向上找 roots.json
+ *   3. 记忆文件 ~/.dsh/workspace-keeper.root
+ * 找到 2 或 3 以外的结果会写回记忆文件。
+ */
+async function resolveRoot(ctx, exec, conf) {
+  const configured = typeof conf?.workspaceRoot === 'string' ? conf.workspaceRoot.trim() : ''
+  if (configured !== '') {
+    const abs = path.resolve(configured)
+    if (fs.existsSync(path.join(abs, 'roots.json'))) return abs
+  }
+  const cwd = await sessionRoot(ctx, exec)
+  const found = findRootUpward(cwd)
+  if (found !== undefined) { writeRootPointer(found); return found }
+  const remembered = readRootPointer()
+  if (typeof remembered === 'string' && fs.existsSync(path.join(remembered, 'roots.json'))) return remembered
+  return undefined
 }
 
 async function workspaceRoot(root, created) {
@@ -100,15 +152,17 @@ function outText() {
   }
 }
 
-function rulesText() {
+function rulesText(root) {
+  const where = root === undefined ? '工作区' : root
   return [
     '## 工作区规矩（dsh-workspace-keeper 在落盘前强制执行）',
     '',
-    '根目录 A:\\workflow\\dsh 只有四类：workflow/、plugins/、归档区、根部文档。',
-    '每个能写的位置都在 roots.json 里登记过；没登记的顶层条目一律拒写。',
+    '**你只能在 ' + where + ' 里面写文件。**',
+    '工作区之外的任何路径（别的磁盘、桌面、下载目录、别人给的文件夹）**一律只读**：',
+    '需要那里的内容，就用相对路径或绝对路径去**读**，然后把结果写到工作区里，不要往外写。',
     '',
-    'workflow/ 里面：',
-    '- 外部支持/<组件>/ —— 共享外部组件（ComfyUI、Git），项目要用就来取；',
+    '工作区里能写的位置（都在 roots.json 登记过）：',
+    '- 外部支持/<组件>/ —— 共享外部组件（ComfyUI、Git）；',
     '- sunloom/ —— 常驻工程，保留原名；',
     '- tools/<对象>-<操作>-tool/ —— 公共工具；tools/历史工具/<原名>_<版本>_<状态>/ 只读；',
     '- <项目名>_<yyyy.mm.dd>_<模型名>/ —— 一次性项目，里面放 <项目名>-tools/ 与按内容命名的目录；',
@@ -141,15 +195,15 @@ function assertSupportedSchema(schema, path = 'schema') {
   }
 }
 
-export function apply(ctx, config = {}) {
-  const conf = { enabled: true, allow: [], promptRules: true, defaultModel: '未标注', ...(config ?? {}) }
+export async function apply(ctx, config = {}) {
+  const conf = { enabled: true, allow: [], promptRules: true, defaultModel: '未标注', workspaceRoot: '', ...(config ?? {}) }
   if (!conf.enabled) return
 
   if (conf.promptRules) {
     ctx.systemPrompt.section({
       name: 'workspace-keeper',
       order: ctx.systemPrompt.getSectionOrder('FILE_REFERENCE'),
-      text: rulesText(),
+      text: rulesText(await resolveRoot(ctx, undefined, conf)),
     })
   }
 
@@ -175,11 +229,24 @@ export function apply(ctx, config = {}) {
       return decision
     }
 
+    // 安全阀：DSH 配置目录永远放行，插件不能把 DSH 锁死
     if (isInDshHome(raw)) return decision
 
-    const root = await sessionRoot(ctx, exec)
+    const root = await resolveRoot(ctx, exec, conf)
+    // 定位不到工作区就不拦（否则换台机器直接全拒）
+    if (root === undefined) return decision
+
     const abs = path.isAbsolute(raw) ? raw : path.resolve(root, raw)
-    if (!isInside(root, abs)) return decision
+    // 只能在工作区里写：外部目录一律拒绝，并告诉它该怎么引用
+    if (!isInside(root, abs)) {
+      return {
+        kind: 'deny',
+        reason: '[workspace-keeper] 只能在工作区里写文件。工作区是 ' + root
+          + '，你要写的位置在它之外：' + abs
+          + '。需要引用外部内容就**用相对路径去读**（例如 ../外部支持/... 或绝对路径读），不要往外写。',
+        info: { source: 'dsh-workspace-keeper', root, attempted: abs },
+      }
+    }
     const target = normalize(path.relative(root, abs))
     if (target === '' || target === '.') return decision
 
@@ -229,7 +296,8 @@ export function apply(ctx, config = {}) {
       const tool = String(args.name ?? '').trim()
       const check = validateToolName(tool)
       if (!check.ok) throw new Error('名字不合规：' + check.reason + '。正确写法如 ' + check.example)
-      const base = await sessionRoot(ctx, exec)
+      const base = await resolveRoot(ctx, exec, conf)
+      if (base === undefined) throw new Error('找不到工作区（含 roots.json 的目录）。请把会话开在工作区内，或在插件配置里设 workspaceRoot')
       const root = await workspaceRoot(base, true)
       if (args.scope === 'shared') {
         if (!args.summary || !args.usage) throw new Error('公共工具必须写 summary 和 usage')
@@ -265,7 +333,9 @@ export function apply(ctx, config = {}) {
       const proj = String(args.name ?? '').trim()
       const bad = segmentProblem(proj) ?? (/[_\s.]/.test(proj) ? '不能含下划线、空格或点' : undefined)
       if (bad !== undefined) throw new Error('项目名不合规（' + bad + '）：' + proj)
-      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
+      const baseC = await resolveRoot(ctx, exec, conf)
+      if (baseC === undefined) throw new Error('找不到工作区（含 roots.json 的目录）')
+      const root = await workspaceRoot(baseC, true)
       const model = safeSegment(String(args.model ?? '').trim() || modelOf(exec, conf.defaultModel))
       const folder = proj + '_' + today() + '_' + model
       if (!parseProjectFolder(folder)) throw new Error('拼出来的项目文件夹名不合规：' + folder)
@@ -284,7 +354,8 @@ export function apply(ctx, config = {}) {
       project: { type: 'string', description: '只看某个项目的工具；不填就列全部项目' }, } },
     output: outText(),
     async execute(args, exec) {
-      const raw = await sessionRoot(ctx, exec)
+      const raw = await resolveRoot(ctx, exec, conf)
+      if (raw === undefined) throw new Error('找不到工作区（含 roots.json 的目录）')
       const root = await workspaceRoot(raw, false)
       const lines = ['公共工具（' + listShared(root).length + '）：']
       const shared = listShared(root)
@@ -323,7 +394,9 @@ export function apply(ctx, config = {}) {
       status: { type: 'string', description: 'broken=跑不起来（默认）；deprecated=被替代' }, } },
     output: outText(),
     async execute(args, exec) {
-      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
+      const baseD = await resolveRoot(ctx, exec, conf)
+      if (baseD === undefined) throw new Error('找不到工作区（含 roots.json 的目录）')
+      const root = await workspaceRoot(baseD, true)
       const name = String(args.name)
       // 先重建说明：重建时会读工具目录（Windows 上目录句柄未释放会导致随后的删除失败）
       writeRootReadme(root)
@@ -343,7 +416,8 @@ export function apply(ctx, config = {}) {
     parameters: { type: 'object', additionalProperties: false, properties: {} },
     output: outText(),
     async execute(_args, exec) {
-      const base = await sessionRoot(ctx, exec)
+      const base = await resolveRoot(ctx, exec, conf)
+      if (base === undefined) throw new Error('找不到工作区（含 roots.json 的目录）')
       const root = await workspaceRoot(base, false)
       let registry
       try { registry = readRegistry(base) } catch (e) { throw new Error('roots.json 解析失败：' + e.message) }
@@ -362,7 +436,9 @@ export function apply(ctx, config = {}) {
       project: { type: 'string', description: '项目文件夹名，例如 和服少女_2026.11.12_deepseek-flash' }, } },
     output: outText(),
     async execute(args, exec) {
-      const root = await workspaceRoot(await sessionRoot(ctx, exec), true)
+      const baseB = await resolveRoot(ctx, exec, conf)
+      if (baseB === undefined) throw new Error('找不到工作区（含 roots.json 的目录）')
+      const root = await workspaceRoot(baseB, true)
       if (args.project === undefined || args.project === null || String(args.project) === '') {
         return { text: writeRootReadme(root) }
       }

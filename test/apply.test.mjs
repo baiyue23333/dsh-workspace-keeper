@@ -23,7 +23,7 @@ const ctx = {
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: { workflow: { kind: 'workspace', access: 'rw', note: 'x' } }, workspaceEntries: { tools: { kind: 'tools', access: 'rw', note: '' }, '.dsh': { kind: 'sessions', access: 'rw', note: '' }, sunloom: { kind: 'asset', access: 'rw', note: '' }, '外部支持': { kind: 'asset', access: 'rw', note: '' } } }))
 fs.mkdirSync(path.join(root, 'workflow'), { recursive: true })
 const originalRegister = ctx.tools.register
-apply(ctx, {})
+await apply(ctx, { workspaceRoot: root })
 ok(ctx.tools.register === originalRegister, '不改写共享工具注册器（保持 Agent preset 作用域）')
 ok(tools.size === 6, '注册 6 个工具')
 ok(sections[0]?.text.includes('tools/<对象>-<操作>-tool'), '系统提示写明公共工具位置')

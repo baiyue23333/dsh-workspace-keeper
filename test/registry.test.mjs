@@ -24,7 +24,7 @@ const ctx = {
   get: () => undefined,
   on: (ev, fn) => { if (ev === 'tools/pre-execute') gate = fn },
 }
-apply(ctx, {})
+await apply(ctx, { workspaceRoot: root })
 ok(tools.size === 6, '六个工具：' + [...tools.keys()].join(','))
 const p = async (f) => gate({ name: 'write', arguments: { file_path: f }, agent }, async () => ({ kind: 'allow' }))
 ok((await p('x.py')).kind === 'deny', '根部散文件被拒')

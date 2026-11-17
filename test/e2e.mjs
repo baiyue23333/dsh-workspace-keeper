@@ -25,7 +25,7 @@ const ctx = {
 const ws = path.join(root, 'workflow')
 fs.mkdirSync(ws, { recursive: true })
 fs.writeFileSync(path.join(root, 'roots.json'), JSON.stringify({ version: 1, workspace: 'workflow', entries: { workflow: { kind: 'workspace', access: 'rw', note: '项目与工具' } }, workspaceEntries: { tools: { kind: 'tools', access: 'rw', note: '' }, '.dsh': { kind: 'sessions', access: 'rw', note: '' }, sunloom: { kind: 'asset', access: 'rw', note: '' }, '外部支持': { kind: 'asset', access: 'rw', note: '' } } }, null, 2))
-apply(ctx, {})
+await apply(ctx, { workspaceRoot: root })
 const call = (n, args) => tools.get(n).execute(args, { agent })
 const expectThrow = async (p, label, needle) => {
   try { await p; ok(false, label + '（应报错）') } catch (e) { ok(needle === undefined || e.message.includes(needle), label + '：' + e.message) }
